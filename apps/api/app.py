@@ -4,12 +4,10 @@ from starlette.middleware.sessions import SessionMiddleware
 from pydantic import BaseModel
 from passlib.context import CryptContext
 from sqlalchemy import create_engine, text
+from sqlalchemy.exc import IntegrityError
 import os
 
 #configurations()
-# Default DATABASE_URL fallback (user:password).
-# Was incorrectly using 'app.app' (missing ':'), which made Postgres try to login as role 'app.app'.
-# Correct form is user:password (app:app).
 DB_URL = os.getenv("DATABASE_URL", "postgresql+psycopg://app:app@localhost:5432/app")
 SESSION_SECRET = os.getenv("SESSION_SECRET", "change_this")
 ALLOWED_ORIGINS = os.getenv("ALLOWED_ORIGINS", "http://localhost:3000").split(",")
@@ -56,8 +54,12 @@ def get_user_by_email(email: str):
 
 def create_user(email: str, password: str):
     hash_ = pwd.hash(password)
-    with engine.begin() as conn:
-        conn.execute(text("INSERT INTO users (email, password_hash) VALUES (:e, :p)"), {"e": email, "p": hash_})
+    try:
+        with engine.begin() as conn:
+            conn.execute(text("INSERT INTO users (email, password_hash) VALUES (:e, :p)"), {"e": email, "p": hash_})
+    except IntegrityError:
+        # Unique email constraint violation – surface as 400 instead of 500
+        raise HTTPException(status_code=400, detail="Email already registered")
 
 def require_auth(request: Request):
     user = request.session.get("user")
